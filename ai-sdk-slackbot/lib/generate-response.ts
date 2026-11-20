@@ -1,87 +1,67 @@
 import { ModelMessage } from "ai";
+import type { KnownBlock } from "@slack/web-api";
 import { loadToolApproval } from "./policy/load";
 import { runAgent, type ToolOutcome } from "./run-agent";
 import { SlackRuntimeContext } from "./policy/runtime-context";
+import { consentBlocks } from "./consent";
 
-// bash/readFile/writeFile run in an in-memory just-bash sandbox (offline,
-// no host access). Seeded with a couple of files so ls/cat have content.
-// Constructed once and reused. bash-tool is ESM-only, so it's pulled via a
-// dynamic import() (works from both CommonJS output and the Vercel bundler).
-let bashToolsPromise: Promise<Record<string, unknown>> | undefined;
-function getBashTools(): Promise<Record<string, unknown>> {
-  if (!bashToolsPromise) {
-    bashToolsPromise = import("bash-tool")
-      .then(({ createBashTool }) =>
-        createBashTool({
-          files: {
-            "README.md": "# Demo workspace\n\nThis is a sandboxed bash demo for the policy bot.\n",
-            "notes.txt": "line one\nline two\nline three\n",
-          },
-        }),
-      )
-      .then((r) => r.tools as Record<string, unknown>);
-    // Don't cache a rejected import: reset so the next request retries instead
-    // of disabling the bot for the process lifetime.
-    bashToolsPromise.catch(() => {
-      bashToolsPromise = undefined;
-    });
-  }
-  return bashToolsPromise;
+export interface BotReply {
+  text: string;
+  blocks: KnownBlock[];
 }
 
 export const generateResponse = async (
   messages: ModelMessage[],
   runtimeContext: SlackRuntimeContext,
   updateStatus?: (status: string) => void,
-): Promise<string> => {
-  // Independent cold-start work; overlap it.
-  const [toolApproval, bashTools] = await Promise.all([
-    loadToolApproval(),
-    getBashTools(),
-  ]);
+): Promise<BotReply> => {
+  const toolApproval = await loadToolApproval();
 
-  const { text, outcomes } = await runAgent({
+  const { text, outcomes, themes } = await runAgent({
     messages,
     runtimeContext,
     toolApproval,
-    bashTools,
     updateStatus,
   });
 
-  // One consistent footer at the bottom, always present, listing every tool and
-  // its outcome (e.g. "🔧 getWeather" / "🔧 getWeather (blocked by policy)").
-  // "🔧 none" when no tool ran, so a tool-less (possibly hallucinated) answer is
-  // never ambiguous.
+  // Small "sources" footer so it's always visible which RBC sources answered.
   const footer =
     outcomes.length > 0
-      ? `\n\n_🔧 ${[...new Set(outcomes.map(toolLabel))].join(", ")}_`
-      : "\n\n_🔧 none_";
+      ? `\n\n_🔎 ${[...new Set(outcomes.map(toolLabel))].join(", ")}_`
+      : "";
 
   // Convert markdown to Slack mrkdwn format.
   const answer = text
     .replace(/\[(.*?)\]\((.*?)\)/g, "<$2|$1>")
     .replace(/\*\*/g, "*");
 
-  // Policy denials / tool errors: surface the reason verbatim in the body. The
-  // tool name + status live in the footer, so the body stays just the reason.
-  const problems = outcomes.filter((o) => o.status !== "used");
-  const problemNotes = problems.map(
-    (o) => o.reason ?? `${o.toolName} ${o.status}`,
-  );
+  // Policy denials / tool errors: surface the reason verbatim in the body.
+  const problemNotes = outcomes
+    .filter((o) => o.status !== "used")
+    .map((o) => o.reason ?? `${o.toolName} ${o.status}`);
   const anySuccess = outcomes.some((o) => o.status === "used");
 
-  // Nothing ran successfully → show only the reason(s), never the model's
-  // (possibly confabulated) text.
+  let body: string;
   if (problemNotes.length > 0 && !anySuccess) {
-    return problemNotes.join("\n") + footer;
+    // Nothing ran → show only the reason(s), never possibly-confabulated text.
+    body = problemNotes.join("\n");
+  } else if (problemNotes.length > 0) {
+    body = [answer, ...problemNotes].join("\n\n");
+  } else {
+    body = answer || "Sorry, I couldn't come up with an answer — try rephrasing?";
   }
-  // A tool succeeded → keep the answer, and append any denial/error notes so a
-  // blocked call in a multi-tool turn isn't silently dropped.
-  if (problemNotes.length > 0) {
-    return [answer, ...problemNotes].join("\n\n") + footer;
+  body += footer;
+
+  const blocks: KnownBlock[] = [
+    // Section text is capped at 3000 chars by Slack.
+    { type: "section", text: { type: "mrkdwn", text: body.slice(0, 2990) } },
+  ];
+  // Consent gate: only offered when a tool actually ran and classified a need.
+  if (themes.length > 0 && runtimeContext.userId) {
+    blocks.push(...consentBlocks(themes[0], runtimeContext.userId));
   }
 
-  return answer + footer;
+  return { text: body, blocks };
 };
 
 function toolLabel(outcome: ToolOutcome): string {

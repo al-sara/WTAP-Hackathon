@@ -37,27 +37,13 @@ export async function isValidSlackRequest({
     .digest('hex')
   const computedSignature = `v0=${hmac}`
 
-  // Prevent timing attacks
+  // Prevent timing attacks (timingSafeEqual throws on length mismatch)
+  if (computedSignature.length !== slackSignature.length) return false
   return crypto.timingSafeEqual(
     Buffer.from(computedSignature),
     Buffer.from(slackSignature)
   )
 }
-
-export const verifyRequest = async ({
-  requestType,
-  request,
-  rawBody,
-}: {
-  requestType: string;
-  request: Request;
-  rawBody: string;
-}) => {
-  const validRequest = await isValidSlackRequest({ request, rawBody });
-  if (!validRequest || requestType !== "event_callback") {
-    return new Response("Invalid request", { status: 400 });
-  }
-};
 
 export const updateStatusUtil = (channel: string, thread_ts: string) => {
   return async (status: string) => {
@@ -104,6 +90,28 @@ export async function getThread(
     .filter((msg): msg is ModelMessage => msg !== null);
 
   return result;
+}
+
+/**
+ * Recent messages of a plain DM, oldest first, as model messages. Skips the
+ * bot's own placeholder (`excludeTs`) and keeps only the last few turns.
+ */
+export async function getDmHistory(
+  channel: string,
+  botUserId: string,
+  excludeTs?: string,
+  limit = 8,
+): Promise<ModelMessage[]> {
+  const { messages } = await client.conversations.history({ channel, limit: limit + 1 });
+  return (messages ?? [])
+    .filter((m) => m.ts !== excludeTs && m.text)
+    .reverse()
+    .map((m) => ({
+      role: m.bot_id || m.user === botUserId ? "assistant" : "user",
+      // Strip block text noise like the consent prompt from history.
+      content: m.text as string,
+    }) as ModelMessage)
+    .slice(-limit);
 }
 
 export const getBotId = async () => {

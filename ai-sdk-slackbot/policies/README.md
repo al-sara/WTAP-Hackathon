@@ -12,8 +12,8 @@ the policy sees looks like this:
 
 ```jsonc
 {
-  "tool":    { "name": "weather" },          // tool the model wants to run
-  "args":    { "city": "San Francisco" },     // its inputSchema-typed args
+  "tool":    { "name": "findHelp" },         // tool the model wants to run
+  "args":    { "keywords": ["llm"], "theme": "tooling-access" },
   "messages":[                                // full chat history so far
     { "role": "user", "content": "..." }
   ],
@@ -24,11 +24,9 @@ the policy sees looks like this:
 }
 ```
 
-The `throwDice` rule gates on the immutable `channelId`. Set `allowed_dice_channel`
-in `decision.rego` to your channel's ID — right-click the channel in Slack →
-"View channel details" → the ID is at the bottom (starts with `C` for public,
-`G` for private). Matching by ID (not name) needs no extra Slack scope and no
-per-request lookup.
+`logCapacity` gates on the immutable `channelId` (DMs start with `D`). The
+consent gate (`shareSignal`) is evaluated with the same input shape by
+`lib/consent.ts` when a student clicks a sharing button.
 
 Return one of:
 

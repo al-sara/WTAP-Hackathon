@@ -1,7 +1,7 @@
-import { generateText, stepCountIs, tool, type ModelMessage } from "ai";
-import { z } from "zod";
-import { model } from "./model";
-import { exa } from "./utils";
+import { generateText, stepCountIs, type ModelMessage } from "ai";
+import { fallbackModel, model } from "./model";
+import { buildTools } from "./tools";
+import type { Theme } from "./data/seed";
 
 export type ToolStatus = "used" | "denied" | "failed";
 
@@ -16,6 +16,8 @@ export interface AgentResult {
   text: string;
   /** One entry per tool call, in order, with its outcome. */
   outcomes: ToolOutcome[];
+  /** Themes of the tools that actually ran — drives the consent buttons. */
+  themes: Theme[];
 }
 
 export async function runAgent(opts: {
@@ -24,101 +26,50 @@ export async function runAgent(opts: {
   // The OPA-backed approval fn is loaded dynamically (lib/policy/load.ts), so
   // it's untyped at this boundary; generateText expects ToolApprovalConfiguration.
   toolApproval: any;
-  bashTools: Record<string, unknown>;
   updateStatus?: (status: string) => void;
 }): Promise<AgentResult> {
-  const { messages, runtimeContext, toolApproval, bashTools, updateStatus } = opts;
+  const { messages, runtimeContext, toolApproval, updateStatus } = opts;
+  const themes = new Set<Theme>();
 
-  const result = await generateText({
-    model,
-    system: `You are a Slack bot assistant. Keep responses concise and to the point.
-    - Only call a tool when the user's request clearly requires it. For greetings, small talk, or anything you can answer directly, just reply — do NOT call any tool.
-    - Choose the right tool for the request:
-      - searchWeb: questions needing information, documentation, or current facts ("how do I…", "what's the best way to…", news). Use this for any informational/how-to question. (Web search is restricted to vercel.com.)
-      - getWeather: the current weather for a city.
-      - throwDice: roll a die.
-      - bash / readFile / writeFile: ONLY when the user explicitly asks to run a shell command or read/write a file. NEVER use bash to answer an informational or how-to question — use searchWeb instead.
-    - For weather and web questions you MUST use getWeather / searchWeb and base your answer ONLY on the tool's result. NEVER answer from your own knowledge. If the web search returns nothing relevant, say you couldn't find it on vercel.com and stop — do NOT fill in the answer from your own knowledge. If a tool call is denied by policy, relay the denial reason — do not substitute your own answer.
-    - Never invent facts or sources. Only cite a source when it came from an actual web-search tool result, using the real URL from that result.
-    - Do not tag users.
-    - Current date is: ${new Date().toISOString().split("T")[0]}
-    - If a tool call is denied by policy, surface the reason text to the user verbatim.`,
+  const run = (m: typeof model, timeoutMs: number) => generateText({
+    model: m,
+    system: `You are Compass, an always-on first-line mentor in Slack for RBC Tech & Operations early talent (co-ops and new grads, usually in their first job). Mentors and managers have little time; you help students get unstuck, connect with each other, and make sure their voice reaches the Early Talent team.
+
+How to respond:
+- Warm, encouraging, concise. Slack formatting: short bullets, *bold* sparingly. No headings.
+- For greetings/small talk, reply briefly and offer what you can help with — no tool.
+- Otherwise pick exactly the tool that fits the intent:
+  - findHelp: stuck/blocked on a tool, access, codebase, task, or "who owns X".
+  - logCapacity: idle, nothing to do, waiting on work, spare time.
+  - findPeers: wants to meet people, lunch/coffee buddy, someone who shares an interest/skill.
+  - compareToJD: "is this what I signed up for?", work doesn't match the role, career direction.
+- Always set the tool's \`theme\` to the best-fitting category.
+- ONLY name people, channels, repos, docs and events that appear in tool results. Never invent any. If results are empty, say so and suggest #early-talent-help.
+- Give a concrete first step (e.g. which channel to post in and a one-line draft message they can send).
+- You never message anyone on the student's behalf — the student reaches out themselves. Pairings need both managers to approve.
+- Do not tag users.
+- If a tool call is denied by policy, relay the reason verbatim and do not substitute your own answer.
+- Current date: ${new Date().toISOString().split("T")[0]}.`,
     messages,
-    stopWhen: stepCountIs(10),
+    stopWhen: stepCountIs(5),
+    // Two attempts of 55s fit inside maxDuration (120s, vercel.json); fail fast instead of retrying
+    // through a long provider outage (Gemini returns 503 under load).
+    maxRetries: 1,
+    abortSignal: AbortSignal.timeout(timeoutMs),
     runtimeContext,
     toolApproval,
-    tools: {
-      getWeather: tool({
-        description:
-          "Get the current weather for a city. Only requires the city name — coordinates are looked up server-side.",
-        inputSchema: z.object({
-          city: z.string().describe("City name only, e.g. 'San Francisco'."),
-        }),
-        execute: async ({ city }) => {
-          updateStatus?.(`is getting weather for ${city}...`);
-
-          // Policy already restricts which cities reach here; we only need to
-          // geocode for the allowlist.
-          const geo = await fetch(
-            `https://geocoding-api.open-meteo.com/v1/search?count=1&name=${encodeURIComponent(city)}`,
-          ).then((r) => r.json());
-          const hit = geo?.results?.[0];
-          if (!hit) {
-            return { error: `Could not geocode "${city}".`, city };
-          }
-
-          const response = await fetch(
-            `https://api.open-meteo.com/v1/forecast?latitude=${hit.latitude}&longitude=${hit.longitude}&current=temperature_2m,weathercode,relativehumidity_2m&timezone=auto`,
-          );
-
-          const weatherData = await response.json();
-          return {
-            temperature: weatherData.current.temperature_2m,
-            weatherCode: weatherData.current.weathercode,
-            humidity: weatherData.current.relativehumidity_2m,
-            city,
-          };
-        },
-      }),
-      searchWeb: tool({
-        description: "Use this to search the web for information",
-        inputSchema: z.object({
-          query: z.string(),
-          specificDomain: z
-            .string()
-            .nullable()
-            .describe(
-              "a domain to search if the user specifies e.g. bbc.com. Should be only the domain name without the protocol",
-            ),
-        }),
-        execute: async ({ query, specificDomain }) => {
-          updateStatus?.(`is searching the web for ${query}...`);
-          const { results } = await exa.searchAndContents(query, {
-            livecrawl: "always",
-            numResults: 3,
-            includeDomains: specificDomain ? [specificDomain] : undefined,
-          });
-
-          return {
-            results: results.map((result) => ({
-              title: result.title,
-              url: result.url,
-              snippet: result.text.slice(0, 1000),
-            })),
-          };
-        },
-      }),
-      throwDice: tool({
-        description: "Roll a six-sided die and return a number between 1 and 6",
-        inputSchema: z.object({}),
-        execute: async () => {
-          updateStatus?.("is rolling a die...");
-          return { roll: Math.floor(Math.random() * 6) + 1 };
-        },
-      }),
-      ...bashTools,
-    },
+    tools: buildTools(updateStatus, (t) => themes.add(t)),
   });
+
+  let result: Awaited<ReturnType<typeof run>>;
+  try {
+    result = await run(model, 55_000);
+  } catch (error) {
+    if (!fallbackModel) throw error;
+    console.warn("Primary model failed, trying fallback:", (error as Error).message);
+    themes.clear();
+    result = await run(fallbackModel, 55_000);
+  }
 
   // Classify every tool outcome across all steps. We walk `step.content` (the
   // complete per-step part list) rather than `result.response.messages`, which
@@ -152,5 +103,5 @@ export async function runAgent(opts: {
     }
   }
 
-  return { text: result.text, outcomes };
+  return { text: result.text, outcomes, themes: [...themes] };
 }

@@ -1,4 +1,4 @@
-import { AppMentionEvent } from "@slack/web-api";
+import type { AppMentionEvent, KnownBlock } from "@slack/web-api";
 import { client, getThread } from "./slack-utils";
 import { generateResponse } from "./generate-response";
 import { runtimeContextFromEvent } from "./policy/runtime-context";
@@ -16,11 +16,12 @@ const updateStatusUtil = async (
   if (!initialMessage || !initialMessage.ts)
     throw new Error("Failed to post initial message");
 
-  const updateMessage = async (status: string) => {
+  const updateMessage = async (status: string, blocks?: KnownBlock[]) => {
     await client.chat.update({
       channel: event.channel,
       ts: initialMessage.ts as string,
       text: status,
+      ...(blocks ? { blocks } : {}),
     });
   };
   return updateMessage;
@@ -46,12 +47,14 @@ export async function handleNewAppMention(
     const messages = thread_ts
       ? await getThread(channel, thread_ts, botUserId)
       : [{ role: "user" as const, content: event.text }];
-    const result = await generateResponse(messages, runtimeContext, updateMessage);
-    await updateMessage(result);
+    const { text, blocks } = await generateResponse(messages, runtimeContext, (s) =>
+      updateMessage(s),
+    );
+    await updateMessage(text, blocks);
   } catch (error) {
     console.error("Error handling app mention", error);
     await updateMessage(
-      "⚠️ Something went wrong handling that — check the bot logs (a missing Slack scope is the usual cause).",
+      "⚠️ I couldn't answer that just now (the AI service may be busy). Please try again in a moment.",
     );
   }
 }
