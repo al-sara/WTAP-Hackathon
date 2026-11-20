@@ -1,4 +1,4 @@
-# RBC Compass
+# RBC Polaris
 
 **A Slack bot that acts as a first-line mentor for RBC early talent, and turns what students ask into anonymized program insight.**
 
