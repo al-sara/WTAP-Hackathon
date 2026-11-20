@@ -39,6 +39,11 @@ export function currentWeek(now = new Date()): number {
 }
 
 const signals: AnonSignal[] = [];
+// Students who used the bot, per week (ids only — used for counts, never shown).
+const activeByWeek = new Map<number, Set<string>>();
+// Seeded weekly-active counts for the sample cohort (added to live users).
+const SEEDED_ACTIVE = [281, 344, 318, 289];
+const SEEDED_REACHED = 412;
 const followUps: FollowUp[] = [];
 const capacity: CapacityFlag[] = [];
 
@@ -52,6 +57,22 @@ export function recordFollowUp(f: Omit<FollowUp, "at">) {
 
 export function recordCapacity(c: CapacityFlag) {
   capacity.push(c);
+}
+
+/** Count a student as active this week (called on every DM / mention). */
+export function recordActivity(userId: string, week = currentWeek()) {
+  if (!activeByWeek.has(week)) activeByWeek.set(week, new Set());
+  activeByWeek.get(week)!.add(userId);
+}
+
+export function activeCount(week: number): number {
+  return (SEEDED_ACTIVE[week - 1] ?? 0) + (activeByWeek.get(week)?.size ?? 0);
+}
+
+export function reachedCount(): number {
+  const all = new Set<string>();
+  for (const s of activeByWeek.values()) for (const u of s) all.add(u);
+  return SEEDED_REACHED + all.size;
 }
 
 export function getSignals() {

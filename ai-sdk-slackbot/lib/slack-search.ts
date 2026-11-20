@@ -97,7 +97,7 @@ async function getIndex(): Promise<IndexedMessage[]> {
   return building;
 }
 
-async function nameOf(userId: string): Promise<string> {
+export async function nameOf(userId: string): Promise<string> {
   if (names.has(userId)) return names.get(userId)!;
   try {
     const { user } = await client.users.info({ user: userId });

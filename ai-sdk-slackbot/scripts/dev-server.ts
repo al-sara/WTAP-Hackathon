@@ -9,14 +9,21 @@
  * stays alive and the background work just keeps running.
  */
 import { createServer } from "node:http";
-import { POST } from "../api/events";
+import { GET, POST } from "../api/events";
 
 const PORT = Number(process.env.PORT ?? 3000);
 
 createServer(async (req, res) => {
+  // HR dashboard: /dashboard (page) and /dashboard?format=json (data).
+  if (req.method === "GET" && req.url?.startsWith("/dashboard")) {
+    const response = await GET(new Request(`http://localhost:${PORT}${req.url}`));
+    res.writeHead(response.status, Object.fromEntries(response.headers));
+    res.end(await response.text());
+    return;
+  }
   if (req.method !== "POST" || !req.url?.startsWith("/api/events")) {
     res.writeHead(200, { "content-type": "text/plain" });
-    res.end("Compass dev server is running. Point Slack at /api/events.");
+    res.end("Compass dev server is running. Slack → /api/events · HR dashboard → /dashboard");
     return;
   }
 
@@ -44,6 +51,7 @@ createServer(async (req, res) => {
   }
 }).listen(PORT, () => {
   console.log(`Compass listening on http://localhost:${PORT}/api/events`);
+  console.log(`HR dashboard:        http://localhost:${PORT}/dashboard`);
 });
 
 /** "event_callback:message" / "block_actions" / "url_verification" for the log. */

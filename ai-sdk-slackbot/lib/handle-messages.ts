@@ -5,6 +5,7 @@ import type {
 import type { KnownBlock } from "@slack/web-api";
 import { client, getDmHistory, getThread, updateStatusUtil } from "./slack-utils";
 import { generateResponse } from "./generate-response";
+import { recordActivity } from "./store";
 import { runtimeContextFromEvent } from "./policy/runtime-context";
 
 export async function assistantThreadMessage(
@@ -57,6 +58,7 @@ export async function handleNewAssistantMessage(
   const { thread_ts, channel } = event;
   const updateStatus = updateStatusUtil(channel, thread_ts);
   const runtimeContext = runtimeContextFromEvent({ channel, user: event.user });
+  if (event.user) recordActivity(event.user);
   await updateStatus("is thinking...");
   try {
     const messages = await getThread(channel, thread_ts, botUserId);
@@ -89,6 +91,7 @@ export async function handleNewAssistantMessage(
 async function handlePlainDm(event: GenericMessageEvent, botUserId: string) {
   const { channel } = event;
   const runtimeContext = runtimeContextFromEvent({ channel, user: event.user });
+  if (event.user) recordActivity(event.user);
   const placeholder = await client.chat.postMessage({ channel, text: "_🧭 thinking..._" });
   const ts = placeholder.ts as string;
   const update = (text: string, blocks?: KnownBlock[]) =>

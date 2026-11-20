@@ -1,6 +1,7 @@
 import type { AppMentionEvent, KnownBlock } from "@slack/web-api";
 import { client, getThread } from "./slack-utils";
 import { generateResponse } from "./generate-response";
+import { recordActivity } from "./store";
 import { runtimeContextFromEvent } from "./policy/runtime-context";
 
 const updateStatusUtil = async (
@@ -43,6 +44,7 @@ export async function handleNewAppMention(
   // leaving an orphaned "is thinking..." message.
   const updateMessage = await updateStatusUtil("is thinking...", event);
   const runtimeContext = runtimeContextFromEvent({ channel, user: event.user });
+  if (event.user) recordActivity(event.user);
   try {
     const messages = thread_ts
       ? await getThread(channel, thread_ts, botUserId)

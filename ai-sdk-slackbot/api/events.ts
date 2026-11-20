@@ -8,6 +8,27 @@ import { handleNewAppMention } from "../lib/handle-app-mention";
 import { isValidSlackRequest, getBotId } from "../lib/slack-utils";
 import { handleConsentAction } from "../lib/consent";
 import { publishHome } from "../lib/app-home";
+import { dashboardData } from "../lib/dashboard-data";
+import { dashboardPage } from "../lib/dashboard-page";
+
+/**
+ * GET → the Early Talent (HR) dashboard: HTML page, or its data with
+ * ?format=json. Served by this same function so it reads the same in-memory
+ * store as the bot. Set DASHBOARD_KEY to require ?key=… (HR-only access).
+ */
+export async function GET(request: Request) {
+  const url = new URL(request.url);
+  const key = process.env.DASHBOARD_KEY;
+  if (key && url.searchParams.get("key") !== key) {
+    return new Response("Not authorized. Add ?key=… to the URL.", { status: 401 });
+  }
+  if (url.searchParams.get("format") === "json") {
+    return Response.json(await dashboardData(), { headers: { "cache-control": "no-store" } });
+  }
+  return new Response(dashboardPage, {
+    headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" },
+  });
+}
 
 /**
  * Single endpoint for Slack Events AND Interactivity (point both Request URLs
