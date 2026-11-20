@@ -12,6 +12,7 @@ import {
   supportChannels,
 } from "./data/seed";
 import { currentWeek, recordCapacity } from "./store";
+import { searchSlack } from "./slack-search";
 
 /**
  * The four intents from the pitch. The LLM only picks the tool, extracts
@@ -64,11 +65,12 @@ export function buildTools(
     // Intent 1 — "I'm stuck on X"
     findHelp: tool({
       description:
-        "Student is stuck/blocked on a tool, access, codebase or task. Returns support channels (with owners), current code owners, similar past intern projects, and opted-in peers who have capacity.",
+        "Student is stuck/blocked on a tool, access, codebase or task. Returns support channels (with owners), current code owners, similar past intern projects, opted-in peers who have capacity, and people in public Slack channels who have talked about the topic (`fromSlack`, self-declared experts first).",
       inputSchema: z.object({ keywords: keywordsSchema, theme: themeSchema }),
       execute: async ({ keywords, theme }) => {
         onTheme?.(theme);
-        updateStatus?.("is searching support channels, repos and past projects...");
+        updateStatus?.("is searching Slack, support channels, repos and past projects...");
+        const fromSlack = await searchSlack(keywords);
         const channels = topBy(supportChannels, (c) => [...c.topics, c.channel], keywords, 2);
         const owners = topBy(codeOwners, (r) => [...r.topics, r.repo], keywords, 3);
         return {
@@ -86,6 +88,7 @@ export function buildTools(
             2,
           ).map(publicPeer),
           relatedEvents: topBy(events, (e) => e.topics, keywords, 1),
+          fromSlack,
         };
       },
     }),
@@ -121,11 +124,12 @@ export function buildTools(
     // Intent 3 — "Who can I talk to about Y / lunch?"
     findPeers: tool({
       description:
-        "Student wants to meet people, find a lunch/coffee buddy, or someone with a shared interest or skill. Returns opted-in peers and social events.",
+        "Student wants to meet people, find a lunch/coffee buddy, or someone with a shared interest or skill. Returns opted-in peers, social events, and people in public Slack channels who have talked about the topic (`fromSlack`).",
       inputSchema: z.object({ keywords: keywordsSchema, theme: themeSchema }),
       execute: async ({ keywords, theme }) => {
         onTheme?.(theme);
         updateStatus?.("is finding people you might click with...");
+        const fromSlack = await searchSlack(keywords);
         const matches = topBy(
           peers.filter((p) => p.optedIn),
           (p) => [...p.interests, ...p.skills],
@@ -137,6 +141,7 @@ export function buildTools(
           peers: matches.map(publicPeer),
           events: topBy(events, (e) => e.topics, [...keywords, "social"], 2),
           sameHub: defaultStudentProfile.hub,
+          fromSlack,
         };
       },
     }),

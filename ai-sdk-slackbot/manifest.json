@@ -1,7 +1,7 @@
 {
   "display_information": {
     "name": "Compass",
-    "description": "First-line mentor for early talent — and anonymized program insight for Early Talent.",
+    "description": "First-line mentor for early talent \u2014 and anonymized program insight for Early Talent.",
     "background_color": "#1d3557"
   },
   "features": {
@@ -10,9 +10,12 @@
       "messages_tab_enabled": true,
       "messages_tab_read_only_enabled": false
     },
-    "bot_user": { "display_name": "Compass", "always_online": true },
+    "bot_user": {
+      "display_name": "Compass",
+      "always_online": true
+    },
     "assistant_view": {
-      "assistant_description": "Ask anything you'd save for a 1:1 — who to ask, what to work on, who to meet."
+      "assistant_description": "Ask anything you'd save for a 1:1 \u2014 who to ask, what to work on, who to meet."
     }
   },
   "oauth_config": {
@@ -21,10 +24,13 @@
         "app_mentions:read",
         "assistant:write",
         "channels:history",
+        "channels:join",
+        "channels:read",
         "chat:write",
         "im:history",
         "im:read",
-        "im:write"
+        "im:write",
+        "users:read"
       ]
     }
   },

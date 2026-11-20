@@ -11,6 +11,8 @@ An always-on first-line mentor in Slack for co-ops and new grads. It turns what 
 
 The LLM only **picks the tool, extracts keywords and classifies a theme**. Every name, channel and doc in a reply comes from the data in [lib/data/seed.ts](lib/data/seed.ts), which is mock data for the MVP.
 
+**Reads public Slack.** `findHelp` and `findPeers` also search recent messages in public channels (the bot auto-joins them) and rank people who said they're experts or offered help ("happy to help with C++") highest. See [lib/slack-search.ts](lib/slack-search.ts). Needs the `channels:read`, `channels:join` and `users:read` scopes; without them the bot just skips this step.
+
 **Consent gate.** Each reply that used a tool gets three buttons: *Keep private* (default), *Share anonymously* (stores only theme + week + hub), and *Ask Early Talent to follow up* (named, with consent). An OPA policy enforces exactly which fields can leave the chat. See [policies/decision.rego](policies/decision.rego).
 
 **Early Talent dashboard.** Shown in the bot's **App Home** tab: blockers by week, capacity/idle by group, asks by hub, follow-up requests and receipts. Groups smaller than 5 are hidden.
